@@ -42,6 +42,11 @@ class Config:
         self.AUTO_REPLY_ENABLED = os.getenv('AUTO_REPLY_ENABLED', 'true').lower() == 'true'
         self.KEYWORD_TRIGGER_ENABLED = os.getenv('KEYWORD_TRIGGER_ENABLED', 'true').lower() == 'true'
         
+        # 回复设置
+        self.COMPACT_MODE = os.getenv('COMPACT_MODE', 'true').lower() == 'true'  # 使用紧凑模式回复
+        self.EPHEMERAL_REPLIES = os.getenv('EPHEMERAL_REPLIES', 'true').lower() == 'true'  # 私密回复
+        self.AUTO_DELETE_DELAY = int(os.getenv('AUTO_DELETE_DELAY', '90'))  # 自动删除延迟（秒）
+        
         # 日志配置
         self.LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO').upper()
         

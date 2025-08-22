@@ -4,8 +4,9 @@
 """
 
 import discord
+import asyncio
 from datetime import datetime
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Union
 from enum import Enum
 
 class MessageType(Enum):
@@ -46,7 +47,8 @@ class EmbedFormatter:
         answer: str,
         user_name: str,
         response_time: float = None,
-        image_analyzed: bool = False
+        image_analyzed: bool = False,
+        compact_mode: bool = False
     ) -> discord.Embed:
         """
         创建AI回复的嵌入式消息
@@ -57,11 +59,43 @@ class EmbedFormatter:
             user_name: 提问用户名称
             response_time: 响应时间（秒）
             image_analyzed: 是否分析了图像
+            compact_mode: 是否使用紧凑模式
         
         Returns:
             格式化的Discord嵌入消息
         """
         
+        if compact_mode:
+            # 紧凑模式：只显示核心信息
+            embed = discord.Embed(
+                title=f"💡 SillyTavern 解答",
+                color=EmbedFormatter.COLORS[MessageType.SOLUTION],
+                timestamp=datetime.utcnow()
+            )
+            
+            # 简化显示，不分页，直接截取
+            answer_preview = answer[:800]  # 适当增加到800字符
+            if len(answer) > 800:
+                answer_preview += "\n\n💬 *回答较长，使用 /ask 命令查看完整解答*"
+            
+            embed.add_field(
+                name=f"❓ {question[:100]}{'...' if len(question) > 100 else ''}",
+                value=answer_preview,
+                inline=False
+            )
+            
+            # 简化的页脚
+            footer_text = f"为 {user_name} 解答"
+            if image_analyzed:
+                footer_text += " · 📷 图片已分析"
+            if response_time:
+                footer_text += f" · ⚡ {response_time:.1f}s"
+                
+            embed.set_footer(text=footer_text)
+            
+            return embed
+        
+        # 原有的详细模式保持不变
         embed = discord.Embed(
             title=f"{EmbedFormatter.EMOJIS[MessageType.SOLUTION]} SillyTavern 智能助手",
             description=f"为 **{user_name}** 提供的解答",
@@ -76,21 +110,22 @@ class EmbedFormatter:
             inline=False
         )
         
-        # 添加回答字段
+        # 添加回答字段 - 使用分页显示
         if len(answer) > 1024:
-            # 如果回答太长，分成多个字段
-            chunks = [answer[i:i+1000] for i in range(0, len(answer), 1000)]
-            for i, chunk in enumerate(chunks[:3]):  # 最多显示3个块
-                embed.add_field(
-                    name=f"{EmbedFormatter.EMOJIS[MessageType.INFO]} 解答 {f'({i+1}/{len(chunks)})' if len(chunks) > 1 else ''}",
-                    value=chunk,
-                    inline=False
-                )
+            # 创建分页视图
+            pages = EmbedFormatter._create_answer_pages(answer)
             
-            if len(chunks) > 3:
+            # 显示第一页
+            embed.add_field(
+                name=f"{EmbedFormatter.EMOJIS[MessageType.INFO]} 解答 (第1页/共{len(pages)}页)",
+                value=pages[0],
+                inline=False
+            )
+            
+            if len(pages) > 1:
                 embed.add_field(
-                    name="📝 回复过长", 
-                    value="完整回复请查看上方内容，如需更多帮助请继续提问。",
+                    name="� 导航提示",
+                    value=f"这是一个包含 {len(pages)} 页的回答。点击下方按钮查看其他页面。",
                     inline=False
                 )
         else:
@@ -261,3 +296,117 @@ class EmbedFormatter:
     def format_inline_code(code: str) -> str:
         """格式化行内代码"""
         return f"`{code}`"
+    
+    @staticmethod
+    def _create_answer_pages(answer: str, page_size: int = 1000) -> List[str]:
+        """
+        将长答案分割成多个页面
+        
+        Args:
+            answer: 原始答案
+            page_size: 每页最大字符数
+            
+        Returns:
+            分页后的答案列表
+        """
+        if len(answer) <= page_size:
+            return [answer]
+        
+        pages = []
+        current_page = ""
+        
+        # 按段落分割
+        paragraphs = answer.split('\n\n')
+        
+        for paragraph in paragraphs:
+            # 如果当前段落加上现有页面内容超过页面大小
+            if len(current_page) + len(paragraph) + 2 > page_size:
+                if current_page:  # 如果当前页面不为空，保存它
+                    pages.append(current_page.strip())
+                    current_page = paragraph + '\n\n'
+                else:  # 如果单个段落就超过页面大小，强制分割
+                    # 将长段落按字符强制分割
+                    while len(paragraph) > page_size:
+                        split_point = page_size - 10  # 留一点余量
+                        pages.append(paragraph[:split_point] + "...")
+                        paragraph = "..." + paragraph[split_point:]
+                    current_page = paragraph + '\n\n'
+            else:
+                current_page += paragraph + '\n\n'
+        
+        # 添加最后一页
+        if current_page.strip():
+            pages.append(current_page.strip())
+        
+        return pages if pages else [answer[:page_size]]
+    
+    @staticmethod
+    async def auto_delete_message(message: discord.Message, delay: int = 90):
+        """
+        自动删除消息
+        
+        Args:
+            message: 要删除的Discord消息对象
+            delay: 延迟删除的秒数，默认90秒
+        """
+        try:
+            await asyncio.sleep(delay)
+            # 普通消息都可以尝试删除，私密消息不会传递到这里
+            await message.delete()
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            # 消息可能已被删除或没有权限删除
+            pass
+    
+    @staticmethod
+    async def send_with_auto_delete(
+        target: Union[discord.TextChannel, discord.Interaction],
+        embed: discord.Embed = None,
+        content: str = None,
+        ephemeral: bool = False,
+        delete_after: int = 90
+    ) -> Optional[discord.Message]:
+        """
+        发送消息并设置自动删除
+        
+        Args:
+            target: 目标频道或交互对象
+            embed: 嵌入式消息
+            content: 文本内容
+            ephemeral: 是否为私密消息（仅发送者可见）
+            delete_after: 删除延迟秒数
+            
+        Returns:
+            发送的消息对象（如果是ephemeral则为None）
+        """
+        try:
+            if isinstance(target, discord.Interaction):
+                # 处理斜杠命令交互
+                if not target.response.is_done():
+                    await target.response.send_message(
+                        content=content,
+                        embed=embed,
+                        ephemeral=ephemeral
+                    )
+                    if ephemeral:
+                        return None  # 私密消息无法获取消息对象
+                    message = await target.original_response()
+                else:
+                    message = await target.followup.send(
+                        content=content,
+                        embed=embed,
+                        ephemeral=ephemeral,
+                        wait=True
+                    )
+            else:
+                # 处理普通频道消息
+                message = await target.send(content=content, embed=embed)
+            
+            # 如果不是私密消息且设置了自动删除，启动删除任务
+            if not ephemeral and delete_after > 0 and message:
+                asyncio.create_task(EmbedFormatter.auto_delete_message(message, delete_after))
+            
+            return message
+            
+        except (discord.Forbidden, discord.HTTPException) as e:
+            print(f"发送消息失败: {e}")
+            return None

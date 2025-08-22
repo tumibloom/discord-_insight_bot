@@ -28,18 +28,28 @@ class QAHandlerCog(commands.Cog, name="问答处理"):
         self.processed_messages: Set[int] = set()
         self.cache_max_size = 1000
         
-        # SillyTavern相关关键词模式（更精确的匹配）
+        # SillyTavern相关关键词模式（更简单直接的匹配）
         self.keyword_patterns = [
-            r'sillytavern|silly\s*tavern',
-            r'st\s+(?:error|错误|问题|bug)',
-            r'(?:openai|claude|gemini).{0,10}(?:api|连接|error)',
-            r'character\s+card|角色卡',
-            r'chat\s+completion|聊天完成',
-            r'connection\s+failed|连接失败',
-            r'api\s+(?:key|error|问题)',
-            r'context\s+(?:length|长度)|上下文',
-            r'tavern.{0,20}(?:error|错误|问题)',
-            r'(?:配置|setting|config).{0,10}(?:error|错误|问题)'
+            r'sillytavern',
+            r'silly\s*tavern', 
+            r'st\s+(error|错误|问题|bug|报错)',
+            r'tavern.*(error|错误|问题|报错|bug)',
+            r'(openai|claude|gemini).*(api|连接|error|错误|key)',
+            r'character\s*card',
+            r'角色卡',
+            r'chat\s*completion',
+            r'聊天完成',
+            r'connection\s*failed',
+            r'连接失败',
+            r'api\s*(key|error|错误|问题)',
+            r'context.*length',
+            r'上下文.*长度',
+            r'(配置|setting|config).*(error|错误|问题)',
+            # 添加一些测试用的简单关键词
+            r'\bst\b',  # 单独的 "st"
+            r'测试机器人',
+            r'help.*sillytavern',
+            r'sillytavern.*help'
         ]
         
         # 编译正则表达式以提高性能
@@ -177,6 +187,16 @@ class QAHandlerCog(commands.Cog, name="问答处理"):
             # 提取触发的关键词（用于日志）
             triggered_keyword = await self._extract_triggered_keyword(message.content)
             
+            # 先发送占位消息
+            placeholder_embed = EmbedFormatter.create_thinking_embed(message.author.display_name)
+            placeholder_embed.add_field(
+                name="🔄 正在处理中",
+                value="检测到您的问题，正在调用AI分析，请稍候...",
+                inline=False
+            )
+            
+            placeholder_msg = await message.reply(embed=placeholder_embed)
+            
             # 记录关键词触发事件
             await database.record_keyword_trigger(
                 user_id=message.author.id,
@@ -192,7 +212,8 @@ class QAHandlerCog(commands.Cog, name="问答处理"):
                     question=message.content,
                     user=message.author,
                     channel=message.channel,
-                    message=message
+                    message=message,
+                    placeholder_message=placeholder_msg  # 传递占位消息
                 )
             else:
                 self.logger.error("找不到AI集成模块")
@@ -234,6 +255,16 @@ class QAHandlerCog(commands.Cog, name="问答处理"):
             if not image_attachment:
                 return
             
+            # 先发送占位消息
+            placeholder_embed = EmbedFormatter.create_thinking_embed(message.author.display_name)
+            placeholder_embed.add_field(
+                name="📸 图片分析中",
+                value="正在分析您上传的图片，请稍候...",
+                inline=False
+            )
+            
+            placeholder_msg = await message.reply(embed=placeholder_embed)
+            
             # 获取AI集成Cog来处理图片分析
             ai_cog = self.bot.get_cog("AI集成")
             if ai_cog:
@@ -242,7 +273,8 @@ class QAHandlerCog(commands.Cog, name="问答处理"):
                     description=message.content,
                     user=message.author,
                     channel=message.channel,
-                    message=message
+                    message=message,
+                    placeholder_message=placeholder_msg  # 传递占位消息
                 )
             else:
                 self.logger.error("找不到AI集成模块")
