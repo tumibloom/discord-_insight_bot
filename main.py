@@ -35,10 +35,21 @@ def main():
             logger.error("请复制 .env.example 为 .env 并配置必要的环境变量")
             sys.exit(1)
         
-        if not os.getenv('GEMINI_API_KEY'):
-            logger.error("❌ GEMINI_API_KEY 环境变量未设置")
-            logger.error("请在 .env 文件中配置 Gemini API 密钥")
+        # 检查AI配置 - 至少需要配置一种AI服务
+        has_gemini = bool(os.getenv('GEMINI_API_KEY'))
+        has_custom_api = bool(os.getenv('CUSTOM_API_ENDPOINT') and os.getenv('CUSTOM_API_KEY'))
+        
+        if not has_gemini and not has_custom_api:
+            logger.error("❌ 未检测到任何AI服务配置")
+            logger.error("请配置以下任一AI服务:")
+            logger.error("• Gemini API: 设置 GEMINI_API_KEY")
+            logger.error("• 自定义API: 设置 CUSTOM_API_ENDPOINT, CUSTOM_API_KEY, CUSTOM_API_MODEL")
             sys.exit(1)
+        
+        if has_custom_api:
+            logger.info("✅ 检测到自定义API配置")
+        if has_gemini:
+            logger.info("✅ 检测到Gemini API配置")
         
         # 创建并启动机器人
         bot = DiscordQABot()

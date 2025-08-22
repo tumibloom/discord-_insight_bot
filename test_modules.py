@@ -22,7 +22,25 @@ async def test_modules():
         from config import config
         print("✅ 配置模块加载成功")
         print(f"   - Discord Token: {'已配置' if config.DISCORD_TOKEN != 'your_discord_bot_token_here' else '未配置'}")
-        print(f"   - Gemini API Key: {'已配置' if config.GEMINI_API_KEY else '未配置'}")
+        
+        # 检查AI配置状态
+        gemini_configured = bool(config.GEMINI_API_KEY)
+        custom_api_configured = bool(config.CUSTOM_API_ENDPOINT and config.CUSTOM_API_KEY)
+        
+        print(f"   - Gemini API: {'已配置' if gemini_configured else '未配置'}")
+        if gemini_configured:
+            print(f"     * 模型: {config.GEMINI_MODEL}")
+            
+        print(f"   - 自定义API: {'已配置' if custom_api_configured else '未配置'}")
+        if custom_api_configured:
+            print(f"     * 端点: {config.CUSTOM_API_ENDPOINT}")
+            print(f"     * 模型: {config.CUSTOM_API_MODEL}")
+        
+        if not gemini_configured and not custom_api_configured:
+            print("   ⚠️ 警告: 未检测到任何AI配置！")
+        elif gemini_configured and custom_api_configured:
+            print("   ✅ 检测到多个AI配置，将优先使用自定义API")
+        
         print(f"   - 管理员用户: {len(config.ADMIN_USERS)} 个")
     except Exception as e:
         print(f"❌ 配置模块加载失败: {e}")
@@ -66,6 +84,15 @@ async def test_modules():
         from utils.ai_client import ai_client
         print("✅ AI客户端模块加载成功")
         
+        # 检查可用的API
+        api_status = ai_client.get_available_apis()
+        if api_status['custom_api']:
+            print("   - ✅ 自定义API可用")
+        if api_status['gemini']:
+            print("   - ✅ Gemini API可用") 
+        if not api_status['has_any_api']:
+            print("   - ⚠️ 警告: 没有可用的AI API配置")
+        
         # 注意：不进行实际API调用测试，避免消耗配额
         
     except Exception as e:
@@ -84,9 +111,13 @@ async def test_modules():
     print("🎉 所有模块测试通过！")
     print()
     print("📋 下一步操作:")
-    print("1. 配置 .env 文件中的 DISCORD_TOKEN 和 GEMINI_API_KEY")
-    print("2. 设置 ADMIN_USERS 为你的Discord用户ID")  
-    print("3. 运行 python main.py 启动机器人")
+    print("1. 配置 .env 文件中的 DISCORD_TOKEN")
+    print("2. 配置AI服务 (选择其一或两者都配置):")
+    print("   • Gemini: 设置 GEMINI_API_KEY")
+    print("   • 自定义API: 设置 CUSTOM_API_ENDPOINT, CUSTOM_API_KEY, CUSTOM_API_MODEL")
+    print("   • 如果两者都配置，将优先使用自定义API")
+    print("3. 设置 ADMIN_USERS 为你的Discord用户ID")  
+    print("4. 运行 python main.py 启动机器人")
     
     return True
 

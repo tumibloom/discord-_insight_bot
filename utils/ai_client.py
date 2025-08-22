@@ -26,16 +26,48 @@ class AIClient:
     
     def _setup_clients(self):
         """初始化AI客户端"""
+        gemini_available = False
+        custom_api_available = False
+        
         try:
+            # 检查自定义API配置
+            if config.CUSTOM_API_ENDPOINT and config.CUSTOM_API_KEY:
+                custom_api_available = True
+                logger.info(f"自定义API配置已启用: {config.CUSTOM_API_ENDPOINT}")
+                logger.info(f"自定义API模型: {config.CUSTOM_API_MODEL}")
+            
+            # 检查Gemini配置
             if config.GEMINI_API_KEY:
                 genai.configure(api_key=config.GEMINI_API_KEY)
                 self.gemini_client = genai.GenerativeModel(config.GEMINI_MODEL)
+                gemini_available = True
                 logger.info(f"Gemini客户端初始化成功，模型: {config.GEMINI_MODEL}")
+            
+            # 根据配置情况提供相应的信息
+            if custom_api_available and gemini_available:
+                logger.info("✅ 检测到多个AI配置，优先使用自定义API")
+            elif custom_api_available:
+                logger.info("✅ 使用自定义API作为AI服务提供商")
+            elif gemini_available:
+                logger.info("✅ 使用Gemini作为AI服务提供商")
             else:
-                logger.warning("GEMINI_API_KEY未设置，Gemini功能将不可用")
+                logger.warning("⚠️ 未检测到任何AI配置！请配置GEMINI_API_KEY或自定义API设置")
+                logger.warning("   自定义API需要: CUSTOM_API_ENDPOINT, CUSTOM_API_KEY, CUSTOM_API_MODEL")
+                logger.warning("   Gemini需要: GEMINI_API_KEY")
                 
         except Exception as e:
             logger.error(f"初始化AI客户端失败: {e}")
+    
+    def get_available_apis(self) -> Dict[str, bool]:
+        """获取可用的API状态"""
+        return {
+            'custom_api': bool(config.CUSTOM_API_ENDPOINT and config.CUSTOM_API_KEY),
+            'gemini': bool(config.GEMINI_API_KEY and self.gemini_client),
+            'has_any_api': bool(
+                (config.CUSTOM_API_ENDPOINT and config.CUSTOM_API_KEY) or 
+                (config.GEMINI_API_KEY and self.gemini_client)
+            )
+        }
     
     async def get_session(self) -> aiohttp.ClientSession:
         """获取或创建HTTP会话"""
