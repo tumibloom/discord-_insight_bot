@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+*.pyo
+
+# VS Code
+.vscode/
+
+# 环境/依赖
+.env
+.env.*
+venv/
+env/
+.venv/
+pip-log.txt
+
+# 数据库/日志
+*.db
+*.sqlite3
+*.log
+logs/
+*.pid
+
+# 其他
+.DS_Store
+*.7z
