@@ -77,7 +77,7 @@ class KnowledgeBaseCog(commands.Cog, name="知识库"):
                     title="搜索结果为空",
                     user_name=interaction.user.display_name
                 )
-                await interaction.followup.send(embed=embed)
+                await interaction.followup.send(embed=embed, ephemeral=True)
             else:
                 # 创建分页内容
                 pages = []
@@ -108,7 +108,7 @@ class KnowledgeBaseCog(commands.Cog, name="知识库"):
                         inline=False
                     )
                     
-                    await interaction.followup.send(embed=embed)
+                    await interaction.followup.send(embed=embed, ephemeral=True)
                 else:
                     # 使用分页视图
                     pagination_view = PaginationView(
@@ -129,7 +129,7 @@ class KnowledgeBaseCog(commands.Cog, name="知识库"):
                 title="搜索错误",
                 user_name=interaction.user.display_name
             )
-            await interaction.followup.send(embed=embed)
+            await interaction.followup.send(embed=embed, ephemeral=True)
     
     @app_commands.command(name="error_help", description="获取特定错误代码的帮助")
     @app_commands.describe(error_code="错误代码或关键词")
@@ -162,7 +162,7 @@ class KnowledgeBaseCog(commands.Cog, name="知识库"):
                 
                 embed.set_footer(text=f"错误代码: {error_code}")
             
-            await interaction.followup.send(embed=embed)
+            await interaction.followup.send(embed=embed, ephemeral=True)
             
         except Exception as e:
             self.logger.error(f"获取错误帮助失败: {e}")
@@ -171,7 +171,7 @@ class KnowledgeBaseCog(commands.Cog, name="知识库"):
                 title="查询错误",
                 user_name=interaction.user.display_name
             )
-            await interaction.followup.send(embed=embed)
+            await interaction.followup.send(embed=embed, ephemeral=True)
     
     @app_commands.command(name="quick_fix", description="获取常见问题的快速解决方案")
     @app_commands.describe(issue="问题类型")
@@ -213,7 +213,7 @@ class KnowledgeBaseCog(commands.Cog, name="知识库"):
                     inline=False
                 )
             
-            await interaction.followup.send(embed=embed)
+            await interaction.followup.send(embed=embed, ephemeral=True)
             
         except Exception as e:
             self.logger.error(f"获取快速修复失败: {e}")
@@ -222,7 +222,7 @@ class KnowledgeBaseCog(commands.Cog, name="知识库"):
                 title="查询错误",
                 user_name=interaction.user.display_name
             )
-            await interaction.followup.send(embed=embed)
+            await interaction.followup.send(embed=embed, ephemeral=True)
     
     @app_commands.command(name="kb_stats", description="显示知识库统计信息")
     async def knowledge_base_stats(self, interaction: discord.Interaction):

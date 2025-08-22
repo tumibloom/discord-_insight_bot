@@ -3,6 +3,7 @@
 管理问答记录、用户统计和知识库数据
 """
 
+import re
 import sqlite3
 import asyncio
 import aiosqlite
@@ -104,11 +105,27 @@ class Database:
                     )
                 """)
                 
+                # 动态关键词管理表
+                await db.execute("""
+                    CREATE TABLE IF NOT EXISTS regex_keywords (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        pattern TEXT NOT NULL UNIQUE,
+                        description TEXT,
+                        enabled BOOLEAN DEFAULT TRUE,
+                        created_by INTEGER,
+                        trigger_count INTEGER DEFAULT 0,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                
                 # 创建索引
                 await db.execute("CREATE INDEX IF NOT EXISTS idx_qa_user_id ON qa_records(user_id)")
                 await db.execute("CREATE INDEX IF NOT EXISTS idx_qa_created_at ON qa_records(created_at)")
                 await db.execute("CREATE INDEX IF NOT EXISTS idx_kb_keyword ON knowledge_base(keyword)")
                 await db.execute("CREATE INDEX IF NOT EXISTS idx_kb_category ON knowledge_base(category)")
+                await db.execute("CREATE INDEX IF NOT EXISTS idx_regex_pattern ON regex_keywords(pattern)")
+                await db.execute("CREATE INDEX IF NOT EXISTS idx_regex_enabled ON regex_keywords(enabled)")
                 
                 await db.commit()
                 logger.info("数据库初始化完成")
@@ -396,6 +413,104 @@ class Database:
                 
         except Exception as e:
             logger.error(f"清理旧记录失败: {e}")
+    
+    # ==================== 正则关键词管理 ====================
+    
+    async def add_regex_keyword(self, pattern: str, description: str = None, created_by: int = None) -> bool:
+        """添加正则关键词"""
+        try:
+            # 验证正则表达式
+            re.compile(pattern, re.IGNORECASE | re.UNICODE)
+            
+            async with aiosqlite.connect(self.db_path) as db:
+                await db.execute(
+                    """INSERT OR IGNORE INTO regex_keywords 
+                       (pattern, description, created_by) VALUES (?, ?, ?)""",
+                    (pattern, description, created_by)
+                )
+                await db.commit()
+                return db.total_changes > 0
+                
+        except re.error as e:
+            logger.error(f"无效的正则表达式 '{pattern}': {e}")
+            return False
+        except Exception as e:
+            logger.error(f"添加正则关键词失败: {e}")
+            return False
+    
+    async def remove_regex_keyword(self, pattern: str) -> bool:
+        """删除正则关键词"""
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                cursor = await db.execute(
+                    "DELETE FROM regex_keywords WHERE pattern = ?",
+                    (pattern,)
+                )
+                await db.commit()
+                return cursor.rowcount > 0
+                
+        except Exception as e:
+            logger.error(f"删除正则关键词失败: {e}")
+            return False
+    
+    async def toggle_regex_keyword(self, pattern: str) -> Optional[bool]:
+        """切换正则关键词的启用状态"""
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                # 获取当前状态
+                cursor = await db.execute(
+                    "SELECT enabled FROM regex_keywords WHERE pattern = ?",
+                    (pattern,)
+                )
+                row = await cursor.fetchone()
+                if not row:
+                    return None
+                
+                # 切换状态
+                new_state = not row[0]
+                await db.execute(
+                    "UPDATE regex_keywords SET enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE pattern = ?",
+                    (new_state, pattern)
+                )
+                await db.commit()
+                return new_state
+                
+        except Exception as e:
+            logger.error(f"切换关键词状态失败: {e}")
+            return None
+    
+    async def get_regex_keywords(self, enabled_only: bool = True) -> List[Dict[str, Any]]:
+        """获取正则关键词列表"""
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                db.row_factory = aiosqlite.Row
+                
+                query = "SELECT * FROM regex_keywords"
+                if enabled_only:
+                    query += " WHERE enabled = TRUE"
+                query += " ORDER BY created_at DESC"
+                
+                cursor = await db.execute(query)
+                rows = await cursor.fetchall()
+                
+                return [dict(row) for row in rows]
+                
+        except Exception as e:
+            logger.error(f"获取正则关键词失败: {e}")
+            return []
+    
+    async def increment_keyword_trigger(self, pattern: str):
+        """增加关键词触发计数"""
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                await db.execute(
+                    "UPDATE regex_keywords SET trigger_count = trigger_count + 1, updated_at = CURRENT_TIMESTAMP WHERE pattern = ?",
+                    (pattern,)
+                )
+                await db.commit()
+                
+        except Exception as e:
+            logger.error(f"更新关键词触发计数失败: {e}")
 
 # 全局数据库实例
 database = Database()

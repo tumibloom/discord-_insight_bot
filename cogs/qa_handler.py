@@ -28,8 +28,8 @@ class QAHandlerCog(commands.Cog, name="问答处理"):
         self.processed_messages: Set[int] = set()
         self.cache_max_size = 1000
         
-        # SillyTavern相关关键词模式（更简单直接的匹配）
-        self.keyword_patterns = [
+        # 内置的默认关键词模式（基础模式，不可删除）
+        self.default_keyword_patterns = [
             r'sillytavern',
             r'silly\s*tavern', 
             r'st\s+(error|错误|问题|bug|报错)',
@@ -52,11 +52,17 @@ class QAHandlerCog(commands.Cog, name="问答处理"):
             r'sillytavern.*help'
         ]
         
+        # 动态关键词模式（从数据库加载）
+        self.dynamic_keyword_patterns = []
+        
+        # 合并的关键词模式
+        self.keyword_patterns = self.default_keyword_patterns.copy()
+        
         # 编译正则表达式以提高性能
-        self.compiled_patterns = [
-            re.compile(pattern, re.IGNORECASE | re.UNICODE)
-            for pattern in self.keyword_patterns
-        ]
+        self.compiled_patterns = []
+        
+        # 加载动态关键词（异步任务）
+        asyncio.create_task(self._load_dynamic_keywords())
         
         # 排除的消息类型
         self.exclude_patterns = [
@@ -72,8 +78,40 @@ class QAHandlerCog(commands.Cog, name="问答处理"):
     
     async def cog_load(self):
         """Cog加载时的初始化"""
+        # 确保动态关键词已加载
+        await self._load_dynamic_keywords()
         self.logger.info("问答处理模块已加载")
-        self.logger.info(f"监听关键词模式: {len(self.keyword_patterns)} 个")
+        self.logger.info(f"监听关键词模式: {len(self.keyword_patterns)} 个 (默认: {len(self.default_keyword_patterns)}, 动态: {len(self.dynamic_keyword_patterns)})")
+    
+    async def _load_dynamic_keywords(self):
+        """从数据库加载动态关键词"""
+        try:
+            # 导入database模块以避免循环导入
+            from database import database
+            
+            # 获取启用的动态关键词
+            dynamic_keywords = await database.get_regex_keywords(enabled_only=True)
+            self.dynamic_keyword_patterns = [kw['pattern'] for kw in dynamic_keywords]
+            
+            # 合并关键词
+            self.keyword_patterns = self.default_keyword_patterns + self.dynamic_keyword_patterns
+            
+            # 重新编译正则表达式
+            self.compiled_patterns = [
+                re.compile(pattern, re.IGNORECASE | re.UNICODE)
+                for pattern in self.keyword_patterns
+            ]
+            
+            self.logger.info(f"加载了 {len(self.dynamic_keyword_patterns)} 个动态关键词")
+            
+        except Exception as e:
+            self.logger.error(f"加载动态关键词失败: {e}")
+            # 如果加载失败，至少确保默认关键词可用
+            self.keyword_patterns = self.default_keyword_patterns.copy()
+            self.compiled_patterns = [
+                re.compile(pattern, re.IGNORECASE | re.UNICODE)
+                for pattern in self.keyword_patterns
+            ]
     
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
@@ -140,18 +178,30 @@ class QAHandlerCog(commands.Cog, name="问答处理"):
         """检查文本是否包含触发关键词"""
         if not config.KEYWORD_TRIGGER_ENABLED or not text:
             return False
-        
+
         # 排除不相关的消息
         for pattern in self.exclude_compiled:
             if pattern.search(text):
                 return False
-        
+
         # 检查SillyTavern相关关键词
-        for pattern in self.compiled_patterns:
+        for i, pattern in enumerate(self.compiled_patterns):
             if pattern.search(text):
+                # 如果是动态关键词，记录触发次数
+                if i >= len(self.default_keyword_patterns):
+                    dynamic_pattern = self.keyword_patterns[i]
+                    asyncio.create_task(self._increment_keyword_trigger(dynamic_pattern))
                 return True
-        
+
         return False
+    
+    async def _increment_keyword_trigger(self, pattern: str):
+        """增加关键词触发计数（异步）"""
+        try:
+            from database import database
+            await database.increment_keyword_trigger(pattern)
+        except Exception as e:
+            self.logger.error(f"更新关键词触发计数失败: {e}")
     
     async def _should_analyze_image(self, message: discord.Message) -> bool:
         """判断是否应该分析图片"""
@@ -390,7 +440,7 @@ class QAHandlerCog(commands.Cog, name="问答处理"):
             f"自动回复功能已{status}",
             user_name=ctx.author.display_name
         )
-        await ctx.send(embed=embed)
+        await ctx.send(embed=embed, ephemeral=True)
     
     @commands.command(name="toggle_keyword_trigger", hidden=True)
     @commands.has_permissions(administrator=True) 
@@ -403,17 +453,18 @@ class QAHandlerCog(commands.Cog, name="问答处理"):
             f"关键词触发功能已{status}",
             user_name=ctx.author.display_name
         )
-        await ctx.send(embed=embed)
+        await ctx.send(embed=embed, ephemeral=True)
     
     @commands.command(name="qa_stats", hidden=True)
     @commands.has_permissions(administrator=True)
     async def qa_stats(self, ctx):
         """显示问答统计信息（管理员命令）"""
+        from utils.message_formatter import MessageType
         stats = await database.get_system_stats()
         
         embed = discord.Embed(
             title="📊 问答系统统计",
-            color=EmbedFormatter.COLORS[EmbedFormatter.MessageType.INFO]
+            color=EmbedFormatter.COLORS[MessageType.INFO]
         )
         
         embed.add_field(name="总问题数", value=stats.get('total_questions', 0), inline=True)
@@ -434,7 +485,230 @@ class QAHandlerCog(commands.Cog, name="问答处理"):
             inline=True
         )
         
-        await ctx.send(embed=embed)
+        await ctx.send(embed=embed, ephemeral=True)
+    
+    # ==================== 动态关键词管理命令 ====================
+    
+    @discord.app_commands.command(name="keyword-add", description="添加新的正则关键词（管理员）")
+    @commands.has_permissions(administrator=True) 
+    @discord.app_commands.describe(
+        pattern="正则表达式模式",
+        description="关键词描述（可选）"
+    )
+    async def add_keyword_cmd(self, interaction: discord.Interaction, pattern: str, description: str = None):
+        """添加新的正则关键词"""
+        # 检查权限
+        if not interaction.user.guild_permissions.manage_messages:
+            embed = EmbedFormatter.create_error_embed(
+                "权限不足",
+                "需要管理消息权限才能使用此命令。",
+                user_name=interaction.user.display_name
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+        
+        # 验证正则表达式
+        try:
+            re.compile(pattern, re.IGNORECASE | re.UNICODE)
+        except re.error as e:
+            embed = EmbedFormatter.create_error_embed(
+                "正则表达式无效",
+                f"错误：{e}",
+                user_name=interaction.user.display_name
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+        
+        # 添加到数据库
+        from database import database
+        success = await database.add_regex_keyword(pattern, description, interaction.user.id)
+        
+        if success:
+            # 重新加载关键词
+            await self._load_dynamic_keywords()
+            
+            embed = EmbedFormatter.create_success_embed(
+                "关键词添加成功",
+                f"正则模式：`{pattern}`\n描述：{description or '无'}",
+                user_name=interaction.user.display_name
+            )
+        else:
+            embed = EmbedFormatter.create_error_embed(
+                "添加失败",
+                "关键词可能已存在或数据库错误。",
+                user_name=interaction.user.display_name
+            )
+        
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+    
+    @discord.app_commands.command(name="keyword-remove", description="删除正则关键词（管理员）")
+    @commands.has_permissions(administrator=True)
+    @discord.app_commands.describe(pattern="要删除的正则表达式模式")
+    async def remove_keyword_cmd(self, interaction: discord.Interaction, pattern: str):
+        """删除正则关键词"""
+        # 检查权限
+        if not interaction.user.guild_permissions.manage_messages:
+            embed = EmbedFormatter.create_error_embed(
+                "权限不足",
+                "需要管理消息权限才能使用此命令。",
+                user_name=interaction.user.display_name
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+        
+        # 从数据库删除
+        from database import database
+        success = await database.remove_regex_keyword(pattern)
+        
+        if success:
+            # 重新加载关键词
+            await self._load_dynamic_keywords()
+            
+            embed = EmbedFormatter.create_success_embed(
+                "关键词删除成功",
+                f"已删除正则模式：`{pattern}`",
+                user_name=interaction.user.display_name
+            )
+        else:
+            embed = EmbedFormatter.create_error_embed(
+                "删除失败",
+                "关键词不存在或数据库错误。",
+                user_name=interaction.user.display_name
+            )
+        
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+    
+    @discord.app_commands.command(name="keyword-toggle", description="切换关键词启用状态（管理员）")
+    @commands.has_permissions(administrator=True)
+    @discord.app_commands.describe(pattern="要切换状态的正则表达式模式")
+    async def toggle_keyword_cmd(self, interaction: discord.Interaction, pattern: str):
+        """切换关键词启用状态"""
+        # 检查权限
+        if not interaction.user.guild_permissions.manage_messages:
+            embed = EmbedFormatter.create_error_embed(
+                "权限不足",
+                "需要管理消息权限才能使用此命令。",
+                user_name=interaction.user.display_name
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+        
+        # 切换状态
+        from database import database
+        new_state = await database.toggle_regex_keyword(pattern)
+        
+        if new_state is not None:
+            # 重新加载关键词
+            await self._load_dynamic_keywords()
+            
+            status = "启用" if new_state else "禁用"
+            embed = EmbedFormatter.create_success_embed(
+                f"关键词已{status}",
+                f"正则模式：`{pattern}`",
+                user_name=interaction.user.display_name
+            )
+        else:
+            embed = EmbedFormatter.create_error_embed(
+                "操作失败",
+                "关键词不存在或数据库错误。",
+                user_name=interaction.user.display_name
+            )
+        
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+    
+    @discord.app_commands.command(name="keyword-list", description="查看所有关键词")
+    async def list_keywords_cmd(self, interaction: discord.Interaction):
+        """查看所有关键词"""
+        try:
+            from database import database
+            from utils.message_formatter import MessageType
+            
+            # 获取所有关键词（包括禁用的）
+            keywords = await database.get_regex_keywords(enabled_only=False)
+            
+            if not keywords:
+                embed = EmbedFormatter.create_info_embed(
+                    "关键词列表",
+                    "暂无动态关键词。\n\n💡 使用 `/keyword-add` 添加新的关键词。",
+                    user_name=interaction.user.display_name
+                )
+                await interaction.response.send_message(embed=embed, ephemeral=True)
+                return
+            
+            # 准备分页内容
+            items_per_page = 5
+            pages = []
+            
+            for i in range(0, len(keywords), items_per_page):
+                page_keywords = keywords[i:i + items_per_page]
+                
+                embed = discord.Embed(
+                    title="📝 动态关键词列表",
+                    color=EmbedFormatter.COLORS[MessageType.INFO]
+                )
+                
+                for kw in page_keywords:
+                    status = "✅" if kw['enabled'] else "❌"
+                    trigger_count = kw.get('trigger_count', 0)
+                    description = kw.get('description') or "无描述"
+                    
+                    embed.add_field(
+                        name=f"{status} `{kw['pattern']}`",
+                        value=f"**描述：** {description}\n**触发次数：** {trigger_count}\n**创建时间：** {kw['created_at'][:16]}",
+                        inline=False
+                    )
+                
+                embed.set_footer(text=f"第 {i//items_per_page + 1} 页 / 共 {(len(keywords)-1)//items_per_page + 1} 页 | 总共 {len(keywords)} 个关键词")
+                pages.append(embed)
+            
+            if len(pages) == 1:
+                await interaction.response.send_message(embed=pages[0], ephemeral=True)
+            else:
+                from utils.pagination_view import EmbedPaginationView
+                view = EmbedPaginationView(pages)
+                await interaction.response.send_message(embed=pages[0], view=view, ephemeral=True)
+                
+        except Exception as e:
+            self.logger.error(f"查看关键词列表失败: {e}")
+            embed = EmbedFormatter.create_error_embed(
+                "查看失败",
+                f"无法获取关键词列表：{str(e)}",
+                user_name=interaction.user.display_name
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+    
+    @discord.app_commands.command(name="keyword-reload", description="重新加载关键词（管理员）")
+    async def reload_keywords_cmd(self, interaction: discord.Interaction):
+        """重新加载关键词"""
+        # 检查管理员权限
+        if not interaction.user.guild_permissions.administrator:
+            embed = EmbedFormatter.create_error_embed(
+                "权限不足",
+                "需要管理员权限才能使用此命令。",
+                user_name=interaction.user.display_name
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+        
+        try:
+            # 重新加载关键词
+            await self._load_dynamic_keywords()
+            
+            embed = EmbedFormatter.create_success_embed(
+                "关键词重新加载完成",
+                f"共加载 {len(self.keyword_patterns)} 个关键词\n- 默认关键词：{len(self.default_keyword_patterns)} 个\n- 动态关键词：{len(self.dynamic_keyword_patterns)} 个",
+                user_name=interaction.user.display_name
+            )
+            
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+        except Exception as e:
+            self.logger.error(f"重新加载关键词失败: {e}")
+            embed = EmbedFormatter.create_error_embed(
+                "重新加载失败",
+                f"发生错误：{str(e)}",
+                user_name=interaction.user.display_name
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
 
 async def setup(bot: commands.Bot):
     """设置Cog"""

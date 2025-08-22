@@ -159,7 +159,7 @@ class AdminCog(commands.Cog, name="管理功能"):
             )
             self.logger.error(f"数据库清理失败: {e}")
         
-        await interaction.followup.send(embed=embed)
+        await interaction.followup.send(embed=embed, ephemeral=True)
     
     @app_commands.command(name="user_stats", description="查看用户的使用统计")
     @app_commands.describe(user="要查看的用户")
@@ -235,7 +235,7 @@ class AdminCog(commands.Cog, name="管理功能"):
                 f"❌ 最近 {hours} 小时内没有问题记录",
                 user_name=interaction.user.display_name
             )
-            await interaction.followup.send(embed=embed)
+            await interaction.followup.send(embed=embed, ephemeral=True)
         else:
             # 创建分页内容
             pages = []
@@ -278,7 +278,7 @@ class AdminCog(commands.Cog, name="管理功能"):
                     inline=False
                 )
                 
-                await interaction.followup.send(embed=embed)
+                await interaction.followup.send(embed=embed, ephemeral=True)
             else:
                 # 使用分页视图
                 pagination_view = PaginationView(

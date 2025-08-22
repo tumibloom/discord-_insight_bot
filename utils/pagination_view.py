@@ -135,3 +135,62 @@ class PaginationView(discord.ui.View):
         # 禁用所有按钮
         for item in self.children:
             item.disabled = True
+
+
+class EmbedPaginationView(discord.ui.View):
+    """专用于 Embed 对象的分页视图"""
+    
+    def __init__(self, embeds: List[discord.Embed], timeout: float = 300.0):
+        super().__init__(timeout=timeout)
+        self.embeds = embeds
+        self.current_page = 0
+        self.max_pages = len(embeds)
+        
+        # 如果只有一页，不显示按钮
+        if self.max_pages <= 1:
+            self.clear_items()
+        else:
+            self.update_buttons()
+    
+    def update_buttons(self):
+        """更新按钮状态"""
+        self.first_page.disabled = (self.current_page == 0)
+        self.previous_page.disabled = (self.current_page == 0)
+        self.next_page.disabled = (self.current_page == self.max_pages - 1)
+        self.last_page.disabled = (self.current_page == self.max_pages - 1)
+    
+    @discord.ui.button(label='⏪', style=discord.ButtonStyle.gray)
+    async def first_page(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """跳转到第一页"""
+        self.current_page = 0
+        self.update_buttons()
+        await interaction.response.edit_message(embed=self.embeds[self.current_page], view=self)
+    
+    @discord.ui.button(label='⬅️', style=discord.ButtonStyle.gray)
+    async def previous_page(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """上一页"""
+        if self.current_page > 0:
+            self.current_page -= 1
+        self.update_buttons()
+        await interaction.response.edit_message(embed=self.embeds[self.current_page], view=self)
+    
+    @discord.ui.button(label='➡️', style=discord.ButtonStyle.gray)
+    async def next_page(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """下一页"""
+        if self.current_page < self.max_pages - 1:
+            self.current_page += 1
+        self.update_buttons()
+        await interaction.response.edit_message(embed=self.embeds[self.current_page], view=self)
+    
+    @discord.ui.button(label='⏩', style=discord.ButtonStyle.gray)
+    async def last_page(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """跳转到最后一页"""
+        self.current_page = self.max_pages - 1
+        self.update_buttons()
+        await interaction.response.edit_message(embed=self.embeds[self.current_page], view=self)
+    
+    async def on_timeout(self):
+        """超时处理"""
+        # 禁用所有按钮
+        for item in self.children:
+            item.disabled = True
