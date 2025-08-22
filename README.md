@@ -45,7 +45,7 @@
 
 1. **克隆项目**
    ```bash
-   git clone <repository-url>
+   git clone https://github.com/tumibloom/discord_insight_bot.git
    cd discord_qa_bot
    ```
 
@@ -83,6 +83,12 @@ DISCORD_TOKEN=your_discord_bot_token_here
 # Gemini API密钥（必需）
 GEMINI_API_KEY=your_gemini_api_key_here
 GEMINI_MODEL=gemini-2.0-flash-exp
+# 可选: 自定义API端点 (如果使用其他OpenAI兼容的API)
+# 如果要使用自定义API，请取消下面三行的注释并配置正确的值
+# CUSTOM_API_ENDPOINT=https://your-api-endpoint.com/v1
+# CUSTOM_API_KEY=your_custom_api_key
+# CUSTOM_API_MODEL=gpt-4o-mini
+# 优先级设置: 如果同时配置了Gemini和自定义API，会优先使用自定义API
 
 # 管理员用户ID
 ADMIN_USERS=123456789012345678,987654321098765432
