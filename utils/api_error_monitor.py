@@ -160,41 +160,72 @@ class APIErrorMonitor:
     async def _send_admin_notification(self, error_key: str, severity: str, error_record: Dict, count: int):
         """发送管理员通知"""
         try:
-            if not config.ADMIN_USERS:
+            # 获取所有管理员ID（包括环境变量配置的和数据库中的）
+            admin_ids = set(config.ADMIN_USERS)  # 环境变量管理员
+            
+            # 从数据库获取管理员
+            try:
+                db_admins = await database.get_admin_users(active_only=True)
+                for admin in db_admins:
+                    admin_ids.add(admin['user_id'])
+            except Exception as e:
+                self.logger.warning(f"获取数据库管理员列表失败: {e}")
+            
+            if not admin_ids:
                 self.logger.warning("未配置管理员用户，无法发送通知")
-                return
+                return 0, 0
             
             # 创建错误通知嵌入消息
             embed = await self._create_error_notification_embed(error_record, severity, count)
             
             # 向所有管理员发送私信
             successful_notifications = 0
-            for admin_id in config.ADMIN_USERS:
+            failed_notifications = 0
+            
+            for admin_id in admin_ids:
                 try:
                     admin_user = await self.bot.fetch_user(admin_id)
                     if admin_user:
                         await admin_user.send(embed=embed)
                         successful_notifications += 1
                         self.logger.info(f"已向管理员 {admin_user.display_name} 发送API错误通知")
+                        
+                        # 更新数据库中管理员的最后活动时间
+                        try:
+                            await database.update_admin_activity(admin_id)
+                        except:
+                            pass  # 如果不是数据库管理员，忽略错误
+                        
                 except discord.HTTPException as e:
+                    failed_notifications += 1
                     self.logger.warning(f"向管理员 {admin_id} 发送私信失败: {e}")
                 except Exception as e:
+                    failed_notifications += 1
                     self.logger.error(f"获取管理员用户 {admin_id} 失败: {e}")
             
+            total_admins = len(admin_ids)
+            
             if successful_notifications > 0:
-                self.logger.info(f"API错误通知已发送给 {successful_notifications} 个管理员")
+                self.logger.info(f"API错误通知已发送给 {successful_notifications}/{total_admins} 个管理员")
                 
                 # 记录通知发送
                 await database.log_admin_notification(
                     notification_type="api_error",
+                    title=f"API错误警告 - {severity.upper()}",
                     content=f"{error_record['error_type']}: {error_record['error_message'][:100]}",
-                    recipients_count=successful_notifications
+                    severity=severity,
+                    recipients_count=total_admins,
+                    successful_sends=successful_notifications,
+                    failed_sends=failed_notifications
                 )
             else:
                 self.logger.error("未能向任何管理员发送通知")
                 
+            return successful_notifications, total_admins
+                
         except Exception as e:
             self.logger.error(f"发送管理员通知时发生异常: {e}")
+            return 0, 0
     
     async def _create_error_notification_embed(self, error_record: Dict, severity: str, count: int) -> discord.Embed:
         """创建错误通知嵌入消息"""
@@ -372,6 +403,134 @@ class APIErrorMonitor:
         except Exception as e:
             self.logger.error(f"获取错误统计时发生异常: {e}")
             return {}
+    
+    async def send_admin_notification(
+        self,
+        notification_type: str,
+        title: str,
+        content: str,
+        severity: str = "medium"
+    ) -> tuple[int, int]:
+        """
+        发送管理员通知（公共方法）
+        
+        Args:
+            notification_type: 通知类型（如 "test", "api_error", "system"）
+            title: 通知标题
+            content: 通知内容
+            severity: 严重程度（critical, high, medium, low）
+            
+        Returns:
+            tuple[successful_count, total_admins]: 成功发送数量和总管理员数量
+        """
+        try:
+            # 获取所有管理员ID
+            admin_ids = set(config.ADMIN_USERS)  # 环境变量管理员
+            
+            # 从数据库获取管理员
+            try:
+                db_admins = await database.get_admin_users(active_only=True)
+                for admin in db_admins:
+                    admin_ids.add(admin['user_id'])
+            except Exception as e:
+                self.logger.warning(f"获取数据库管理员列表失败: {e}")
+            
+            if not admin_ids:
+                self.logger.warning("未配置管理员用户，无法发送通知")
+                return 0, 0
+            
+            # 创建通知嵌入消息
+            embed = self._create_general_notification_embed(
+                notification_type=notification_type,
+                title=title,
+                content=content,
+                severity=severity
+            )
+            
+            # 向所有管理员发送私信
+            successful_notifications = 0
+            failed_notifications = 0
+            
+            for admin_id in admin_ids:
+                try:
+                    admin_user = await self.bot.fetch_user(admin_id)
+                    if admin_user:
+                        await admin_user.send(embed=embed)
+                        successful_notifications += 1
+                        self.logger.info(f"已向管理员 {admin_user.display_name} 发送通知: {title}")
+                        
+                        # 更新数据库中管理员的最后活动时间
+                        try:
+                            await database.update_admin_activity(admin_id)
+                        except:
+                            pass  # 如果不是数据库管理员，忽略错误
+                        
+                except discord.HTTPException as e:
+                    failed_notifications += 1
+                    self.logger.warning(f"向管理员 {admin_id} 发送私信失败: {e}")
+                except Exception as e:
+                    failed_notifications += 1
+                    self.logger.error(f"获取管理员用户 {admin_id} 失败: {e}")
+            
+            total_admins = len(admin_ids)
+            
+            if successful_notifications > 0:
+                self.logger.info(f"通知已发送给 {successful_notifications}/{total_admins} 个管理员")
+                
+                # 记录通知发送
+                await database.log_admin_notification(
+                    notification_type=notification_type,
+                    title=title,
+                    content=content[:500],  # 限制长度
+                    severity=severity,
+                    recipients_count=total_admins,
+                    successful_sends=successful_notifications,
+                    failed_sends=failed_notifications
+                )
+            else:
+                self.logger.error("未能向任何管理员发送通知")
+                
+            return successful_notifications, total_admins
+                
+        except Exception as e:
+            self.logger.error(f"发送管理员通知时发生异常: {e}")
+            return 0, 0
+    
+    def _create_general_notification_embed(
+        self,
+        notification_type: str,
+        title: str,
+        content: str,
+        severity: str
+    ) -> discord.Embed:
+        """创建通用通知嵌入消息"""
+        # 严重程度配色和图标
+        severity_config = {
+            'critical': {'color': 0xFF0000, 'icon': '🚨'},
+            'high': {'color': 0xFF8C00, 'icon': '⚠️'},
+            'medium': {'color': 0xFFD700, 'icon': '🟡'},
+            'low': {'color': 0x00CED1, 'icon': '🔵'}
+        }
+        
+        config_data = severity_config.get(severity, severity_config['medium'])
+        
+        embed = discord.Embed(
+            title=f"{config_data['icon']} {title}",
+            description=content,
+            color=config_data['color'],
+            timestamp=datetime.now()
+        )
+        
+        embed.add_field(
+            name="📋 详细信息",
+            value=f"类型: **{notification_type.upper()}**\n"
+                  f"严重程度: **{severity.upper()}**\n"
+                  f"时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            inline=False
+        )
+        
+        embed.set_footer(text="QA Bot 管理员通知系统")
+        return embed
 
 # 全局错误监控器实例
 error_monitor: Optional[APIErrorMonitor] = None
