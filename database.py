@@ -119,6 +119,38 @@ class Database:
                     )
                 """)
                 
+                # API错误记录表
+                await db.execute("""
+                    CREATE TABLE IF NOT EXISTS api_errors (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        error_type TEXT NOT NULL,
+                        error_message TEXT NOT NULL,
+                        severity TEXT NOT NULL DEFAULT 'low',
+                        endpoint TEXT,
+                        user_id INTEGER,
+                        additional_info TEXT,
+                        count INTEGER DEFAULT 1,
+                        first_occurred DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        last_occurred DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                
+                # 管理员通知记录表
+                await db.execute("""
+                    CREATE TABLE IF NOT EXISTS admin_notifications (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        notification_type TEXT NOT NULL,
+                        title TEXT,
+                        content TEXT NOT NULL,
+                        severity TEXT DEFAULT 'medium',
+                        recipients_count INTEGER DEFAULT 0,
+                        successful_sends INTEGER DEFAULT 0,
+                        failed_sends INTEGER DEFAULT 0,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                
                 # 创建索引
                 await db.execute("CREATE INDEX IF NOT EXISTS idx_qa_user_id ON qa_records(user_id)")
                 await db.execute("CREATE INDEX IF NOT EXISTS idx_qa_created_at ON qa_records(created_at)")
@@ -126,6 +158,10 @@ class Database:
                 await db.execute("CREATE INDEX IF NOT EXISTS idx_kb_category ON knowledge_base(category)")
                 await db.execute("CREATE INDEX IF NOT EXISTS idx_regex_pattern ON regex_keywords(pattern)")
                 await db.execute("CREATE INDEX IF NOT EXISTS idx_regex_enabled ON regex_keywords(enabled)")
+                await db.execute("CREATE INDEX IF NOT EXISTS idx_api_errors_type ON api_errors(error_type)")
+                await db.execute("CREATE INDEX IF NOT EXISTS idx_api_errors_severity ON api_errors(severity)")
+                await db.execute("CREATE INDEX IF NOT EXISTS idx_api_errors_occurred ON api_errors(last_occurred)")
+                await db.execute("CREATE INDEX IF NOT EXISTS idx_admin_notifications_type ON admin_notifications(notification_type)")
                 
                 await db.commit()
                 logger.info("数据库初始化完成")
@@ -479,6 +515,237 @@ class Database:
             logger.error(f"切换关键词状态失败: {e}")
             return None
     
+    # ==================== API错误记录方法 ====================
+    
+    async def log_api_error(
+        self,
+        error_type: str,
+        error_message: str,
+        severity: str = 'low',
+        endpoint: Optional[str] = None,
+        user_id: Optional[int] = None,
+        additional_info: Optional[Dict] = None
+    ) -> int:
+        """
+        记录API错误
+        
+        Args:
+            error_type: 错误类型
+            error_message: 错误消息
+            severity: 严重程度 (critical, high, medium, low)
+            endpoint: API端点
+            user_id: 用户ID（如果相关）
+            additional_info: 附加信息字典
+            
+        Returns:
+            记录ID
+        """
+        try:
+            import json
+            
+            async with aiosqlite.connect(self.db_path) as db:
+                # 检查是否已有相同的错误记录
+                cursor = await db.execute("""
+                    SELECT id, count FROM api_errors 
+                    WHERE error_type = ? AND error_message = ? AND endpoint = ?
+                """, (error_type, error_message, endpoint))
+                
+                existing_record = await cursor.fetchone()
+                
+                if existing_record:
+                    # 更新现有记录
+                    record_id, current_count = existing_record
+                    await db.execute("""
+                        UPDATE api_errors 
+                        SET count = count + 1, last_occurred = CURRENT_TIMESTAMP,
+                            severity = ?, additional_info = ?
+                        WHERE id = ?
+                    """, (severity, json.dumps(additional_info) if additional_info else None, record_id))
+                    
+                else:
+                    # 创建新记录
+                    cursor = await db.execute("""
+                        INSERT INTO api_errors (
+                            error_type, error_message, severity, endpoint, 
+                            user_id, additional_info
+                        ) VALUES (?, ?, ?, ?, ?, ?)
+                    """, (
+                        error_type, error_message, severity, endpoint, user_id,
+                        json.dumps(additional_info) if additional_info else None
+                    ))
+                    record_id = cursor.lastrowid
+                
+                await db.commit()
+                return record_id
+                
+        except Exception as e:
+            logger.error(f"记录API错误失败: {e}")
+            return 0
+    
+    async def get_api_error_statistics(self, hours: int = 24) -> Dict:
+        """
+        获取API错误统计信息
+        
+        Args:
+            hours: 统计最近多少小时的错误
+            
+        Returns:
+            统计信息字典
+        """
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                # 总错误数
+                cursor = await db.execute("""
+                    SELECT COUNT(*) FROM api_errors 
+                    WHERE last_occurred >= datetime('now', '-{} hours')
+                """.format(hours))
+                total_errors = (await cursor.fetchone())[0]
+                
+                # 按类型统计
+                cursor = await db.execute("""
+                    SELECT error_type, COUNT(*), SUM(count) FROM api_errors 
+                    WHERE last_occurred >= datetime('now', '-{} hours')
+                    GROUP BY error_type 
+                    ORDER BY COUNT(*) DESC
+                """.format(hours))
+                by_type = await cursor.fetchall()
+                
+                # 按严重程度统计
+                cursor = await db.execute("""
+                    SELECT severity, COUNT(*), SUM(count) FROM api_errors 
+                    WHERE last_occurred >= datetime('now', '-{} hours')
+                    GROUP BY severity 
+                    ORDER BY 
+                        CASE severity 
+                            WHEN 'critical' THEN 1 
+                            WHEN 'high' THEN 2 
+                            WHEN 'medium' THEN 3 
+                            WHEN 'low' THEN 4 
+                        END
+                """.format(hours))
+                by_severity = await cursor.fetchall()
+                
+                # 最近的错误
+                cursor = await db.execute("""
+                    SELECT error_type, error_message, severity, endpoint, 
+                           count, last_occurred 
+                    FROM api_errors 
+                    WHERE last_occurred >= datetime('now', '-{} hours')
+                    ORDER BY last_occurred DESC 
+                    LIMIT 10
+                """.format(hours))
+                recent_errors = await cursor.fetchall()
+                
+                return {
+                    'total_errors': total_errors,
+                    'by_type': [
+                        {'type': row[0], 'records': row[1], 'total_count': row[2]} 
+                        for row in by_type
+                    ],
+                    'by_severity': [
+                        {'severity': row[0], 'records': row[1], 'total_count': row[2]} 
+                        for row in by_severity
+                    ],
+                    'recent_errors': [
+                        {
+                            'type': row[0],
+                            'message': row[1][:100] + ('...' if len(row[1]) > 100 else ''),
+                            'severity': row[2],
+                            'endpoint': row[3],
+                            'count': row[4],
+                            'last_occurred': row[5]
+                        } for row in recent_errors
+                    ]
+                }
+                
+        except Exception as e:
+            logger.error(f"获取API错误统计失败: {e}")
+            return {}
+    
+    async def log_admin_notification(
+        self,
+        notification_type: str,
+        content: str,
+        title: Optional[str] = None,
+        severity: str = 'medium',
+        recipients_count: int = 0,
+        successful_sends: int = 0,
+        failed_sends: int = 0
+    ) -> int:
+        """
+        记录管理员通知
+        
+        Args:
+            notification_type: 通知类型
+            content: 通知内容
+            title: 通知标题
+            severity: 严重程度
+            recipients_count: 接收者数量
+            successful_sends: 成功发送数
+            failed_sends: 失败发送数
+            
+        Returns:
+            记录ID
+        """
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                cursor = await db.execute("""
+                    INSERT INTO admin_notifications (
+                        notification_type, title, content, severity,
+                        recipients_count, successful_sends, failed_sends
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    notification_type, title, content, severity,
+                    recipients_count, successful_sends, failed_sends
+                ))
+                
+                await db.commit()
+                return cursor.lastrowid
+                
+        except Exception as e:
+            logger.error(f"记录管理员通知失败: {e}")
+            return 0
+    
+    async def get_admin_notification_history(self, limit: int = 50) -> List[Dict]:
+        """
+        获取管理员通知历史
+        
+        Args:
+            limit: 返回记录数量限制
+            
+        Returns:
+            通知历史列表
+        """
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                cursor = await db.execute("""
+                    SELECT notification_type, title, content, severity,
+                           recipients_count, successful_sends, failed_sends,
+                           created_at
+                    FROM admin_notifications 
+                    ORDER BY created_at DESC 
+                    LIMIT ?
+                """, (limit,))
+                
+                rows = await cursor.fetchall()
+                
+                return [
+                    {
+                        'type': row[0],
+                        'title': row[1],
+                        'content': row[2][:200] + ('...' if len(row[2]) > 200 else ''),
+                        'severity': row[3],
+                        'recipients_count': row[4],
+                        'successful_sends': row[5],
+                        'failed_sends': row[6],
+                        'created_at': row[7]
+                    } for row in rows
+                ]
+                
+        except Exception as e:
+            logger.error(f"获取管理员通知历史失败: {e}")
+            return []
+        
     async def get_regex_keywords(self, enabled_only: bool = True) -> List[Dict[str, Any]]:
         """获取正则关键词列表"""
         try:

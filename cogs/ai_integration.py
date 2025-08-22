@@ -125,7 +125,7 @@ class AIIntegrationCog(commands.Cog, name="AI集成"):
                 await interaction.response.send_message(embed=thinking_embed, ephemeral=config.EPHEMERAL_REPLIES)
             
             # 生成AI回复
-            ai_response = await ai_client.generate_response(question)
+            ai_response = await ai_client.generate_response(question, user_id=user.id)
             
             if not ai_response:
                 error_embed = EmbedFormatter.create_error_embed(
@@ -366,7 +366,7 @@ class AIIntegrationCog(commands.Cog, name="AI集成"):
             analysis_question = description if description else "请分析这张SillyTavern相关的截图，说明可能的问题和解决方案。"
             
             # 调用AI分析
-            ai_response = await ai_client.analyze_image(image, analysis_question)
+            ai_response = await ai_client.analyze_image(image, analysis_question, user_id=user.id)
             
             if not ai_response:
                 error_embed = EmbedFormatter.create_error_embed(

@@ -107,7 +107,8 @@ SillyTavern是一个用于AI聊天的前端界面，常见问题包括：
         prompt: str, 
         image: Optional[Union[Image.Image, bytes]] = None,
         max_tokens: int = None,
-        temperature: float = None
+        temperature: float = None,
+        user_id: Optional[int] = None
     ) -> Optional[str]:
         """
         生成AI回复
@@ -117,6 +118,7 @@ SillyTavern是一个用于AI聊天的前端界面，常见问题包括：
             image: 可选的图像数据
             max_tokens: 最大token数
             temperature: 温度参数
+            user_id: 用户ID（用于错误追踪）
         
         Returns:
             AI生成的回复文本
@@ -127,17 +129,29 @@ SillyTavern是一个用于AI聊天的前端界面，常见问题包括：
             
             # 优先使用自定义API (OpenAI兼容)
             if config.CUSTOM_API_ENDPOINT and config.CUSTOM_API_KEY:
-                return await self._generate_with_custom_api(full_prompt, image, max_tokens, temperature)
+                return await self._generate_with_custom_api(full_prompt, image, max_tokens, temperature, user_id)
             
             # 备用选择：使用Gemini
             if self.gemini_client:
-                return await self._generate_with_gemini(full_prompt, image, max_tokens, temperature)
+                return await self._generate_with_gemini(full_prompt, image, max_tokens, temperature, user_id)
             
             logger.error("没有可用的AI客户端配置")
+            # 记录配置错误
+            await self._record_api_error(
+                "configuration_error", 
+                "没有可用的AI客户端配置", 
+                user_id=user_id
+            )
             return "抱歉，AI服务暂时不可用，请联系管理员检查配置。"
             
         except Exception as e:
             logger.error(f"生成AI回复时发生错误: {e}")
+            # 记录未知错误
+            await self._record_api_error(
+                "generation_error", 
+                str(e), 
+                user_id=user_id
+            )
             return "抱歉，处理您的问题时遇到了技术问题，请稍后再试。"
     
     async def _generate_with_gemini(
@@ -145,7 +159,8 @@ SillyTavern是一个用于AI聊天的前端界面，常见问题包括：
         prompt: str, 
         image: Optional[Union[Image.Image, bytes]] = None,
         max_tokens: int = None,
-        temperature: float = None
+        temperature: float = None,
+        user_id: Optional[int] = None
     ) -> str:
         """使用Gemini生成回复"""
         try:
@@ -179,10 +194,23 @@ SillyTavern是一个用于AI聊天的前端界面，常见问题包括：
                 return response.text
             else:
                 logger.warning("Gemini返回了空回复")
+                await self._record_api_error(
+                    "empty_response", 
+                    "Gemini返回了空回复", 
+                    endpoint="gemini",
+                    user_id=user_id
+                )
                 return "抱歉，我无法理解您的问题，请尝试重新表述。"
                 
         except Exception as e:
             logger.error(f"Gemini生成回复失败: {e}")
+            # 记录Gemini错误
+            await self._record_api_error(
+                "gemini_error", 
+                str(e), 
+                endpoint="gemini",
+                user_id=user_id
+            )
             raise
     
     async def _generate_with_custom_api(
@@ -190,7 +218,8 @@ SillyTavern是一个用于AI聊天的前端界面，常见问题包括：
         prompt: str, 
         image: Optional[Union[Image.Image, bytes]] = None,
         max_tokens: int = None,
-        temperature: float = None
+        temperature: float = None,
+        user_id: Optional[int] = None
     ) -> str:
         """使用自定义API生成回复"""
         try:
@@ -237,8 +266,9 @@ SillyTavern是一个用于AI聊天的前端界面，常见问题包括：
             }
             
             # 发送请求
+            endpoint = f"{config.CUSTOM_API_ENDPOINT}/chat/completions"
             async with session.post(
-                f"{config.CUSTOM_API_ENDPOINT}/chat/completions",
+                endpoint,
                 json=data,
                 headers=headers
             ) as response:
@@ -250,19 +280,48 @@ SillyTavern是一个用于AI聊天的前端界面，常见问题包括：
                 else:
                     error_text = await response.text()
                     logger.error(f"自定义API请求失败: {response.status}, {error_text}")
+                    
+                    # 记录API错误
+                    await self._record_api_error(
+                        "custom_api_error", 
+                        f"HTTP {response.status}: {error_text}", 
+                        endpoint=endpoint,
+                        user_id=user_id,
+                        additional_info={"status_code": response.status}
+                    )
+                    
                     raise Exception(f"API请求失败: {response.status}")
                     
+        except aiohttp.ClientError as e:
+            logger.error(f"自定义API网络错误: {e}")
+            # 记录网络错误
+            await self._record_api_error(
+                "network_error", 
+                str(e), 
+                endpoint=config.CUSTOM_API_ENDPOINT,
+                user_id=user_id
+            )
+            raise
         except Exception as e:
             logger.error(f"自定义API生成回复失败: {e}")
+            # 记录其他错误（如果还没记录）
+            if not isinstance(e, Exception) or "API请求失败" not in str(e):
+                await self._record_api_error(
+                    "custom_api_error", 
+                    str(e), 
+                    endpoint=config.CUSTOM_API_ENDPOINT,
+                    user_id=user_id
+                )
             raise
     
-    async def analyze_image(self, image: Union[Image.Image, bytes], question: str = "") -> str:
+    async def analyze_image(self, image: Union[Image.Image, bytes], question: str = "", user_id: Optional[int] = None) -> str:
         """
         分析图像内容
         
         Args:
             image: 图像数据
             question: 关于图像的问题
+            user_id: 用户ID（用于错误追踪）
         
         Returns:
             分析结果
@@ -277,11 +336,40 @@ SillyTavern是一个用于AI聊天的前端界面，常见问题包括：
 
 请提供详细的分析和建议。"""
             
-            return await self.generate_response(analysis_prompt, image)
+            return await self.generate_response(analysis_prompt, image, user_id=user_id)
             
         except Exception as e:
             logger.error(f"图像分析失败: {e}")
+            # 记录图像分析错误
+            await self._record_api_error(
+                "image_analysis_error", 
+                str(e), 
+                user_id=user_id
+            )
             return "抱歉，无法分析这张图片，请确保图片格式正确且清晰可见。"
+    
+    async def _record_api_error(
+        self,
+        error_type: str,
+        error_message: str,
+        endpoint: Optional[str] = None,
+        user_id: Optional[int] = None,
+        additional_info: Optional[dict] = None
+    ):
+        """记录API错误到监控系统"""
+        try:
+            # 延迟导入以避免循环导入
+            from utils.api_error_monitor import record_api_error
+            await record_api_error(
+                error_type=error_type,
+                error_message=error_message,
+                endpoint=endpoint,
+                user_id=user_id,
+                additional_info=additional_info
+            )
+        except Exception as e:
+            # 避免错误记录本身导致问题
+            logger.error(f"记录API错误时失败: {e}")
 
 # 全局AI客户端实例
 ai_client = AIClient()

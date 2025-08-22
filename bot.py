@@ -173,6 +173,17 @@ class DiscordQABot:
             self.logger.error(f"数据库初始化失败: {e}")
             raise
     
+    async def setup_error_monitor(self):
+        """设置API错误监控器"""
+        try:
+            from utils.api_error_monitor import initialize_error_monitor
+            initialize_error_monitor(self.bot)
+            self.logger.info("API错误监控器初始化完成")
+        except Exception as e:
+            self.logger.error(f"API错误监控器初始化失败: {e}")
+            # 监控器初始化失败不应该阻止机器人启动
+            pass
+    
     async def load_cogs(self):
         """加载所有Cog模块"""
         cogs_to_load = [
@@ -180,6 +191,7 @@ class DiscordQABot:
             'qa_handler',      # 问答处理
             'knowledge_base',  # 知识库管理
             'admin',           # 管理功能
+            'admin_commands',  # 管理员命令（API监控等）
         ]
         
         loaded_count = 0
@@ -201,6 +213,9 @@ class DiscordQABot:
         try:
             # 初始化数据库
             await self.setup_database()
+            
+            # 初始化API错误监控器
+            await self.setup_error_monitor()
             
             # 加载Cogs
             await self.load_cogs()
