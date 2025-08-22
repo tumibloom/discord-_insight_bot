@@ -19,6 +19,7 @@ class PaginationView(discord.ui.View):
         user_name: str,
         response_time: float = None,
         image_analyzed: bool = False,
+        image_url: str = None,
         timeout: float = 300.0  # 5分钟超时
     ):
         super().__init__(timeout=timeout)
@@ -27,6 +28,7 @@ class PaginationView(discord.ui.View):
         self.user_name = user_name
         self.response_time = response_time
         self.image_analyzed = image_analyzed
+        self.image_url = image_url
         self.current_page = 0
         self.max_pages = len(pages)
         
@@ -71,6 +73,10 @@ class PaginationView(discord.ui.View):
             footer_text += f" • 第{self.current_page + 1}/{self.max_pages}页"
             
         embed.set_footer(text=footer_text)
+        
+        # 如果有图片URL，设置缩略图
+        if self.image_url:
+            embed.set_thumbnail(url=self.image_url)
         
         return embed
     

@@ -14,6 +14,7 @@ from discord import app_commands
 
 from utils.logger import get_logger
 from utils.message_formatter import EmbedFormatter, MessageType
+from utils.pagination_view import PaginationView
 from database import database
 from config import config
 
@@ -76,24 +77,50 @@ class KnowledgeBaseCog(commands.Cog, name="知识库"):
                     title="搜索结果为空",
                     user_name=interaction.user.display_name
                 )
+                await interaction.followup.send(embed=embed)
             else:
-                embed = discord.Embed(
-                    title=f"🔍 知识库搜索结果",
-                    description=f"关键词: **{query}**",
-                    color=EmbedFormatter.COLORS[MessageType.INFO]
-                )
+                # 创建分页内容
+                pages = []
+                items_per_page = 3  # 每页显示3个结果
                 
-                for i, result in enumerate(results[:5], 1):  # 最多显示5个结果
+                for i in range(0, len(results), items_per_page):
+                    page_results = results[i:i+items_per_page]
+                    page_content = ""
+                    
+                    for j, result in enumerate(page_results, 1):
+                        result_num = i + j
+                        page_content += f"**{result_num}. {result['title']}**\n"
+                        page_content += f"{result['description'][:300]}{'...' if len(result['description']) > 300 else ''}\n\n"
+                    
+                    pages.append(page_content.strip())
+                
+                # 如果只有一页内容，直接显示
+                if len(pages) == 1:
+                    embed = discord.Embed(
+                        title=f"🔍 知识库搜索结果",
+                        description=f"关键词: **{query}**\n找到 {len(results)} 个相关结果",
+                        color=EmbedFormatter.COLORS[MessageType.INFO]
+                    )
+                    
                     embed.add_field(
-                        name=f"{i}. {result['title']}",
-                        value=result['description'][:200] + ("..." if len(result['description']) > 200 else ""),
+                        name="📋 搜索结果",
+                        value=pages[0],
                         inline=False
                     )
-                
-                if len(results) > 5:
-                    embed.set_footer(text=f"还有 {len(results) - 5} 个相关结果...")
-            
-            await interaction.followup.send(embed=embed)
+                    
+                    await interaction.followup.send(embed=embed)
+                else:
+                    # 使用分页视图
+                    pagination_view = PaginationView(
+                        pages=pages,
+                        question=f"搜索知识库: {query}",
+                        user_name=interaction.user.display_name
+                    )
+                    
+                    await interaction.followup.send(
+                        embed=pagination_view.create_embed(),
+                        view=pagination_view
+                    )
             
         except Exception as e:
             self.logger.error(f"搜索知识库失败: {e}")

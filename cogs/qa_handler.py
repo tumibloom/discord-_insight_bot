@@ -78,16 +78,26 @@ class QAHandlerCog(commands.Cog, name="问答处理"):
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
         """监听所有消息，处理关键词触发"""
+        # 调试日志：记录收到的消息
+        if not message.author.bot and message.content.strip():
+            self.logger.debug(f"收到消息: {message.author.display_name} 在频道 {message.channel.id}: {message.content[:100]}")
+        
         # 基础过滤
         if not await self._should_process_message(message):
+            # 调试日志：记录为什么被过滤
+            if not message.author.bot and message.content.strip():
+                should_monitor = config.should_monitor_channel(message.channel.id)
+                self.logger.debug(f"消息被过滤 - 频道监控: {should_monitor}, AUTO_REPLY: {config.AUTO_REPLY_ENABLED}")
             return
         
         # 检查是否包含SillyTavern相关关键词
         if await self._contains_trigger_keywords(message.content):
+            self.logger.info(f"检测到关键词触发: {message.author.display_name} - {message.content[:50]}...")
             await self._handle_keyword_trigger(message)
         
         # 检查是否有图片附件且提及了相关关键词
         if message.attachments and await self._should_analyze_image(message):
+            self.logger.info(f"检测到图片分析触发: {message.author.display_name}")
             await self._handle_image_trigger(message)
     
     @commands.Cog.listener()
@@ -187,48 +197,105 @@ class QAHandlerCog(commands.Cog, name="问答处理"):
             # 提取触发的关键词（用于日志）
             triggered_keyword = await self._extract_triggered_keyword(message.content)
             
-            # 先发送占位消息
-            placeholder_embed = EmbedFormatter.create_thinking_embed(message.author.display_name)
-            placeholder_embed.add_field(
-                name="🔄 正在处理中",
-                value="检测到您的问题，正在调用AI分析，请稍候...",
-                inline=False
-            )
+            # 检查消息是否包含图片附件
+            image_attachment = None
+            for att in message.attachments:
+                if att.content_type and att.content_type.startswith('image/'):
+                    image_attachment = att
+                    break
             
-            placeholder_msg = await message.reply(embed=placeholder_embed)
-            
-            # 记录关键词触发事件
-            await database.record_keyword_trigger(
-                user_id=message.author.id,
-                channel_id=message.channel.id,
-                keyword=triggered_keyword,
-                message_content=message.content[:500]  # 限制长度
-            )
-            
-            # 获取AI集成Cog来处理问题
-            ai_cog = self.bot.get_cog("AI集成")
-            if ai_cog:
-                await ai_cog._handle_question(
-                    question=message.content,
-                    user=message.author,
-                    channel=message.channel,
-                    message=message,
-                    placeholder_message=placeholder_msg  # 传递占位消息
+            # 如果有图片附件，优先进行图片分析
+            if image_attachment:
+                # 先发送图片分析占位消息
+                placeholder_embed = EmbedFormatter.create_thinking_embed(message.author.display_name)
+                placeholder_embed.add_field(
+                    name="🔔 图片+文本分析中",
+                    value="检测到您的问题包含图片，正在进行综合分析，请稍候...",
+                    inline=False
                 )
-            else:
-                self.logger.error("找不到AI集成模块")
                 
-                error_embed = EmbedFormatter.create_error_embed(
-                    "AI集成模块未加载，无法处理您的问题。",
-                    title="模块错误",
-                    user_name=message.author.display_name
+                placeholder_msg = await message.reply(embed=placeholder_embed)
+                self.logger.info(f"✅ 已发送图片分析占位消息，消息ID: {placeholder_msg.id}")
+                
+                # 记录关键词触发事件（图片类型）
+                await database.record_keyword_trigger(
+                    user_id=message.author.id,
+                    channel_id=message.channel.id,
+                    keyword=f"{triggered_keyword} (with image)",
+                    message_content=message.content[:500]  # 限制长度
                 )
-                await message.reply(embed=error_embed)
-            
-            self.logger.info(
-                f"关键词触发: 用户 {message.author.display_name} "
-                f"在频道 {message.channel.name} 触发了关键词 '{triggered_keyword}'"
-            )
+                
+                # 获取AI集成Cog来处理图片分析
+                ai_cog = self.bot.get_cog("AI集成")
+                if ai_cog:
+                    await ai_cog._handle_image_analysis(
+                        attachment=image_attachment,
+                        description=message.content,
+                        user=message.author,
+                        channel=message.channel,
+                        message=message,
+                        placeholder_message=placeholder_msg  # 传递占位消息
+                    )
+                else:
+                    self.logger.error("找不到AI集成模块")
+                    
+                    error_embed = EmbedFormatter.create_error_embed(
+                        "AI集成模块未加载，无法处理您的问题。",
+                        title="模块错误",
+                        user_name=message.author.display_name
+                    )
+                    await message.reply(embed=error_embed)
+                
+                self.logger.info(
+                    f"关键词+图片触发: 用户 {message.author.display_name} "
+                    f"在频道 {message.channel.name} 触发了关键词 '{triggered_keyword}' (包含图片)"
+                )
+                
+            else:
+                # 没有图片，进行普通文本问答
+                # 先发送占位消息
+                placeholder_embed = EmbedFormatter.create_thinking_embed(message.author.display_name)
+                placeholder_embed.add_field(
+                    name="  🔁正在处理中",
+                    value="检测到您的问题，正在调用AI分析，请稍候...",
+                    inline=False
+                )
+                
+                placeholder_msg = await message.reply(embed=placeholder_embed)
+                self.logger.info(f"✅ 已发送占位消息，消息ID: {placeholder_msg.id}")
+                
+                # 记录关键词触发事件
+                await database.record_keyword_trigger(
+                    user_id=message.author.id,
+                    channel_id=message.channel.id,
+                    keyword=triggered_keyword,
+                    message_content=message.content[:500]  # 限制长度
+                )
+                
+                # 获取AI集成Cog来处理问题
+                ai_cog = self.bot.get_cog("AI集成")
+                if ai_cog:
+                    await ai_cog._handle_question(
+                        question=message.content,
+                        user=message.author,
+                        channel=message.channel,
+                        message=message,
+                        placeholder_message=placeholder_msg  # 传递占位消息
+                    )
+                else:
+                    self.logger.error("找不到AI集成模块")
+                    
+                    error_embed = EmbedFormatter.create_error_embed(
+                        "AI集成模块未加载，无法处理您的问题。",
+                        title="模块错误",
+                        user_name=message.author.display_name
+                    )
+                    await message.reply(embed=error_embed)
+                
+                self.logger.info(
+                    f"关键词触发: 用户 {message.author.display_name} "
+                    f"在频道 {message.channel.name} 触发了关键词 '{triggered_keyword}'"
+                )
             
         except Exception as e:
             self.logger.error(f"处理关键词触发时发生错误: {e}")

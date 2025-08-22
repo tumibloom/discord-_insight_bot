@@ -2,12 +2,14 @@
   "categories": {
     "connection_issues": {
       "name": "连接问题",
-      "keywords": ["api", "connection", "failed", "timeout", "401", "403", "500", "连接失败", "超时"],
+      "keywords": ["api", "connection", "failed", "timeout", "401", "403", "500", "503", "504", "连接失败", "超时", "网关", "服务器", "internal server error", "bad request", "gateway timeout", "service unavailable"],
       "common_solutions": [
         "检查API密钥是否正确",
         "确认API端点URL格式",
         "验证网络连接状态",
-        "检查防火墙和代理设置"
+        "检查防火墙和代理设置",
+        "更换VPN节点或代理设置",
+        "开启全局/TUN模式"
       ]
     },
     "character_cards": {
@@ -22,12 +24,15 @@
     },
     "chat_settings": {
       "name": "聊天设置",
-      "keywords": ["context", "token", "temperature", "上下文", "参数", "设置"],
+      "keywords": ["context", "token", "temperature", "上下文", "参数", "设置", "prompt", "预设", "破限", "流式", "stream", "配额", "quota", "主要提示词", "main prompt"],
       "common_solutions": [
         "调整上下文长度设置",
         "优化Temperature参数",
         "检查模型兼容性",
-        "重置聊天设置到默认值"
+        "重置聊天设置到默认值",
+        "更换Prompt预设",
+        "开启流式传输",
+        "调整频率惩罚和存在惩罚参数"
       ]
     },
     "installation": {
@@ -48,6 +53,28 @@
         "确认插件安装路径",
         "重启应用加载插件",
         "查看插件配置文件"
+      ]
+    },
+    "content_moderation": {
+      "name": "内容审核问题",
+      "keywords": ["prohibited", "content", "安全策略", "内容违规", "候选项", "candidates", "截断", "空回复", "中文", "英文", "破限"],
+      "common_solutions": [
+        "更换更强的Prompt预设",
+        "修改触发安全策略的内容",
+        "开启防输入截断功能",
+        "立即重新生成(Roll)避免污染上下文",
+        "检查角色卡设计是否存在问题"
+      ]
+    },
+    "model_quota": {
+      "name": "模型配额问题",
+      "keywords": ["quota", "配额", "limit", "限制", "429", "billing", "账单", "公益", "兑换"],
+      "common_solutions": [
+        "检查账户配额和账单状态",
+        "使用兑换机器人进行配额兑换",
+        "升级API计划",
+        "缩短上下文长度",
+        "使用记忆录存和总结功能"
       ]
     }
   },
@@ -101,6 +128,146 @@
         "使用文本摘要功能",
         "分段处理长文本内容"
       ]
+    },
+    "internal_server_error": {
+      "name": "内部服务器错误",
+      "description": "网络环境不稳定",
+      "solutions": [
+        "更换VPN节点，或将代理工具开启全局/TUN模式"
+      ]
+    },
+    "bad_request": {
+      "name": "错误请求",
+      "description": "网络请求配置错误",
+      "solutions": [
+        "更换网络节点，或将代理工具开启全局/TUN模式"
+      ]
+    },
+    "location_not_supported": {
+      "name": "地理位置不支持",
+      "description": "IP地址被Google API明确限制",
+      "solutions": [
+        "更换IP地址，或尝试使用WARP等工具"
+      ]
+    },
+    "unknown_error": {
+      "name": "API返回未知错误",
+      "description": "非正式输出的响应时间超过2分钟，导致连接中断",
+      "solutions": [
+        "在设置中调整单次回复的最大字数，或开启流式传输"
+      ]
+    },
+    "no_candidates": {
+      "name": "API返回无候选项错误",
+      "description": "请求被拒绝但未返回明确原因",
+      "solutions": [
+        "更换网络节点或修改Prompt预设后重试(Roll)"
+      ]
+    },
+    "status_400": {
+      "name": "400/响应状态400",
+      "description": "内容审核设置中存在无效参数，触发原因较为随机",
+      "solutions": [
+        "若在OpenRouter中使用Gemini，尝试将预设中的「频率惩罚」和「存在惩罚」参数设置为0"
+      ]
+    },
+    "prohibited_content": {
+      "name": "内容违规错误",
+      "description": "Prompt或对话内容触发了安全策略",
+      "solutions": [
+        "更换Prompt预设或并启新的内容。若问题复现，可能是角色卡本身的设计存在问题"
+      ]
+    },
+    "code_500_candidates": {
+      "name": "500无候选项返回错误",
+      "description": "Prompt预设的「破限」力度不足，内容审核过于严格",
+      "solutions": [
+        "更换一个效更更强的Prompt预设"
+      ]
+    },
+    "404_not_found": {
+      "name": "404错误",
+      "description": "API请求中指定的模型名称错误",
+      "solutions": [
+        "检查设置，选择正确的Gemini模型"
+      ]
+    },
+    "main_prompt_locked": {
+      "name": "429主要提示词被标记",
+      "description": "主要提示词(Main Prompt)因重复内容问题导致限制",
+      "solutions": [
+        "尝试更换Prompt预设，或修改主要提示词"
+      ]
+    },
+    "server_error_500": {
+      "name": "500服务器错误",
+      "description": "上下文过长触发模型限制，或Google服务器内部错误",
+      "solutions": [
+        "尝试切换到gemini-pro-flash。若问题依旧，可能是Google服务器暂时故障"
+      ]
+    },
+    "service_unavailable_503": {
+      "name": "503服务不可用错误",
+      "description": "Google服务繁忙时不可用或被过载",
+      "solutions": [
+        "这是服务端问题，无法由用户解决，请稍心等待"
+      ]
+    },
+    "gateway_timeout_504": {
+      "name": "504网关超时",
+      "description": "服务器网关响应超时",
+      "solutions": [
+        "开启流式传输。若无效，可能是Google的服务节点出现问题"
+      ]
+    },
+    "quota_exceeded": {
+      "name": "配额超限错误",
+      "description": "上下文超出模型上限或超出当前配额",
+      "solutions": [
+        "缩短上下文，可使用记忆录存，总结，或检查您的计划和账单详情"
+      ]
+    },
+    "unlimited_quota_error": {
+      "name": "无限配额错误",
+      "description": "公益配额用完",
+      "solutions": [
+        "使用兑换机器人进行自助兑换"
+      ]
+    },
+    "chinese_response": {
+      "name": "中文回复变成英文",
+      "description": "Gemini多语言模型在特定场景下的固有特性",
+      "solutions": [
+        "立即帮输包含外语的回复并重新生成(Roll)。这至关重要，能避免污染后续的对话上下文"
+      ]
+    },
+    "empty_response": {
+      "name": "空回复/截断",
+      "description": "Prompt预设的「破限」能力不足",
+      "solutions": [
+        "更换一个效更更好的Prompt预设"
+      ]
+    },
+    "candidate_text_empty": {
+      "name": "候选文本为空",
+      "description": "输入内容被截断",
+      "solutions": [
+        "在Prompt预设中，寻找并开启「防输入截断」相关的条目，或更换预设"
+      ]
+    },
+    "stream_processing_panic": {
+      "name": "流处理恐慌",
+      "description": "流式处理时发生未知错误",
+      "solutions": [
+        "关闭流式传输，然后尝试空回复一次，再更换Prompt预设"
+      ]
+    },
+    "server_disconnected": {
+      "name": "服务器连接断开",
+      "description": "后端响应时间过长，超过了前端(如酒馆)的等待阈值",
+      "solutions": [
+        "请在全局设置中设置流式分组，并且请在SillyTavern设置中开启流式传输"
+      ]
     }
   },
   "quick_fixes": {
@@ -132,6 +299,36 @@
         "查看Console标签页的错误信息",
         "检查Network标签页的请求状态",
         "记录具体的错误消息"
+      ]
+    },
+    "change_proxy": {
+      "name": "更换网络节点",
+      "description": "解决地理位置限制和网络连接问题",
+      "steps": [
+        "更换VPN或代理服务器节点",
+        "开启全局代理或TUN模式",
+        "尝试使用WARP等工具",
+        "测试新的IP地址是否可用"
+      ]
+    },
+    "adjust_prompt": {
+      "name": "调整Prompt设置",
+      "description": "优化AI模型响应和内容审核",
+      "steps": [
+        "更换到更强的Prompt预设",
+        "在OpenRouter中将频率惩罚和存在惩罚设为0",
+        "开启防输入截断功能",
+        "避免触发安全策略的敏感内容"
+      ]
+    },
+    "enable_streaming": {
+      "name": "开启流式传输",
+      "description": "解决响应超时和连接断开问题",
+      "steps": [
+        "在SillyTavern设置中开启流式传输",
+        "在全局设置中配置流式分组",
+        "调整响应超时时间设置",
+        "测试流式响应是否正常"
       ]
     }
   },

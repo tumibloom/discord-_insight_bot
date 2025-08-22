@@ -16,6 +16,7 @@ from discord import app_commands
 
 from utils.logger import get_logger
 from utils.message_formatter import EmbedFormatter, MessageType
+from utils.pagination_view import PaginationView
 from database import database
 from config import config
 
@@ -225,6 +226,8 @@ class AdminCog(commands.Cog, name="管理功能"):
             await interaction.response.send_message("❌ 您没有权限使用此命令", ephemeral=True)
             return
         
+        await interaction.response.defer(ephemeral=True)
+        
         questions = await database.get_recent_questions(limit, hours)
         
         if not questions:
@@ -232,31 +235,62 @@ class AdminCog(commands.Cog, name="管理功能"):
                 f"❌ 最近 {hours} 小时内没有问题记录",
                 user_name=interaction.user.display_name
             )
+            await interaction.followup.send(embed=embed)
         else:
-            embed = discord.Embed(
-                title=f"📋 最近 {hours} 小时的问题记录",
-                description=f"共显示 {len(questions)} 条记录",
-                color=EmbedFormatter.COLORS[MessageType.INFO]
-            )
+            # 创建分页内容
+            pages = []
+            items_per_page = 5  # 每页显示5个问题
             
-            for i, q in enumerate(questions, 1):
-                question_preview = q['question'][:100] + ("..." if len(q['question']) > 100 else "")
+            for i in range(0, len(questions), items_per_page):
+                page_questions = questions[i:i+items_per_page]
+                page_content = ""
                 
-                created_time = datetime.fromisoformat(q['created_at'])
-                time_str = created_time.strftime("%m-%d %H:%M")
+                for q in page_questions:
+                    question_preview = q['question'][:150] + ("..." if len(q['question']) > 150 else "")
+                    
+                    created_time = datetime.fromisoformat(q['created_at'])
+                    time_str = created_time.strftime("%m-%d %H:%M")
+                    
+                    page_content += f"**{q['user_name']}** ({time_str})\n"
+                    page_content += f"❓ {question_preview}\n"
+                    
+                    if q['has_image']:
+                        page_content += "🖼️ 包含图片分析\n"
+                    
+                    if q['response_time']:
+                        page_content += f"⏱️ 响应时间: {q['response_time']:.2f}s\n"
+                    
+                    page_content += "\n"
                 
-                field_name = f"{i}. {q['user_name']} ({time_str})"
-                field_value = f"**Q**: {question_preview}\n"
+                pages.append(page_content.strip())
+            
+            # 如果只有一页内容，直接显示
+            if len(pages) == 1:
+                embed = discord.Embed(
+                    title=f"📋 最近 {hours} 小时的问题记录",
+                    description=f"共显示 {len(questions)} 条记录",
+                    color=EmbedFormatter.COLORS[MessageType.INFO]
+                )
                 
-                if q['has_image']:
-                    field_value += "🖼️ 包含图片分析\n"
+                embed.add_field(
+                    name="📝 问题列表",
+                    value=pages[0],
+                    inline=False
+                )
                 
-                if q['response_time']:
-                    field_value += f"⏱️ 响应时间: {q['response_time']:.2f}s"
+                await interaction.followup.send(embed=embed)
+            else:
+                # 使用分页视图
+                pagination_view = PaginationView(
+                    pages=pages,
+                    question=f"最近 {hours} 小时的问题记录 ({len(questions)} 条)",
+                    user_name=interaction.user.display_name
+                )
                 
-                embed.add_field(name=field_name, value=field_value, inline=False)
-        
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+                await interaction.followup.send(
+                    embed=pagination_view.create_embed(),
+                    view=pagination_view
+                )
     
     @app_commands.command(name="system_info", description="显示系统详细信息")
     async def system_info(self, interaction: discord.Interaction):

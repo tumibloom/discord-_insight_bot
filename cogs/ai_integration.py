@@ -79,6 +79,23 @@ class AIIntegrationCog(commands.Cog, name="AI集成"):
         embed = EmbedFormatter.create_help_embed()
         await interaction.response.send_message(embed=embed, ephemeral=True)
     
+    @app_commands.command(name="help-detail", description="显示详细帮助信息")
+    async def help_detailed(self, interaction: discord.Interaction):
+        """显示详细帮助信息"""
+        pages = EmbedFormatter.create_detailed_help_pages()
+        
+        pagination_view = PaginationView(
+            pages=pages,
+            question="详细帮助信息",
+            user_name=interaction.user.display_name
+        )
+        
+        await interaction.response.send_message(
+            embed=pagination_view.create_embed(),
+            view=pagination_view,
+            ephemeral=True
+        )
+    
     async def _handle_question(
         self,
         interaction: discord.Interaction = None,
@@ -373,46 +390,100 @@ class AIIntegrationCog(commands.Cog, name="AI集成"):
             self.request_count += 1
             self.total_response_time += response_time
             
-            # 创建回复嵌入 - 使用紧凑模式
-            response_embed = EmbedFormatter.create_ai_response_embed(
-                question=f"图像分析: {analysis_question}",
-                answer=ai_response,
-                user_name=user.display_name,
-                response_time=response_time,
-                image_analyzed=True,
-                compact_mode=config.COMPACT_MODE
-            )
-            
-            # 添加原图片缩略图
-            response_embed.set_thumbnail(url=attachment.url)
-            
-            # 发送回复
-            if interaction:
-                # 斜杠命令回复使用私密消息
-                await interaction.edit_original_response(embed=response_embed)
+            # 检查是否需要分页显示
+            if len(ai_response) > 1024:
+                # 使用分页视图
+                pages = EmbedFormatter._create_answer_pages(ai_response)
+                pagination_view = PaginationView(
+                    pages=pages,
+                    question=f"图像分析: {analysis_question}",
+                    user_name=user.display_name,
+                    response_time=response_time,
+                    image_analyzed=True,
+                    image_url=attachment.url
+                )
+                
+                # 发送带分页的回复
+                if interaction:
+                    # 斜杠命令回复使用私密消息
+                    await interaction.edit_original_response(
+                        embed=pagination_view.create_embed(),
+                        view=pagination_view if len(pages) > 1 else None
+                    )
+                else:
+                    # 关键词触发时，发送公开消息
+                    if placeholder_message:
+                        # 如果有占位消息，编辑它
+                        try:
+                            await placeholder_message.edit(
+                                embed=pagination_view.create_embed(),
+                                view=pagination_view if len(pages) > 1 else None
+                            )
+                            # 设置自动删除
+                            asyncio.create_task(EmbedFormatter.auto_delete_message(placeholder_message, config.AUTO_DELETE_DELAY))
+                        except (discord.NotFound, discord.HTTPException):
+                            # 如果占位消息被删除或编辑失败，发送新消息
+                            reply_msg = await message.reply(
+                                embed=pagination_view.create_embed(),
+                                view=pagination_view if len(pages) > 1 else None
+                            )
+                            if reply_msg:
+                                asyncio.create_task(EmbedFormatter.auto_delete_message(reply_msg, config.AUTO_DELETE_DELAY))
+                    elif message:
+                        reply_msg = await message.reply(
+                            embed=pagination_view.create_embed(),
+                            view=pagination_view if len(pages) > 1 else None
+                        )
+                        if reply_msg:
+                            asyncio.create_task(EmbedFormatter.auto_delete_message(reply_msg, config.AUTO_DELETE_DELAY))
+                    else:
+                        sent_msg = await channel.send(
+                            embed=pagination_view.create_embed(),
+                            view=pagination_view if len(pages) > 1 else None
+                        )
+                        if sent_msg:
+                            asyncio.create_task(EmbedFormatter.auto_delete_message(sent_msg, config.AUTO_DELETE_DELAY))
             else:
-                # 关键词触发时，发送公开消息但设置自动删除
-                if placeholder_message:
-                    # 如果有占位消息，编辑它
-                    try:
-                        await placeholder_message.edit(embed=response_embed)
-                        # 设置自动删除
-                        asyncio.create_task(EmbedFormatter.auto_delete_message(placeholder_message, config.AUTO_DELETE_DELAY))
-                    except (discord.NotFound, discord.HTTPException):
-                        # 如果占位消息被删除或编辑失败，发送新消息
+                # 使用普通模式显示
+                response_embed = EmbedFormatter.create_ai_response_embed(
+                    question=f"图像分析: {analysis_question}",
+                    answer=ai_response,
+                    user_name=user.display_name,
+                    response_time=response_time,
+                    image_analyzed=True,
+                    compact_mode=config.COMPACT_MODE
+                )
+                
+                # 添加原图片缩略图
+                response_embed.set_thumbnail(url=attachment.url)
+                
+                # 发送回复
+                if interaction:
+                    # 斜杠命令回复使用私密消息
+                    await interaction.edit_original_response(embed=response_embed)
+                else:
+                    # 关键词触发时，发送公开消息但设置自动删除
+                    if placeholder_message:
+                        # 如果有占位消息，编辑它
+                        try:
+                            await placeholder_message.edit(embed=response_embed)
+                            # 设置自动删除
+                            asyncio.create_task(EmbedFormatter.auto_delete_message(placeholder_message, config.AUTO_DELETE_DELAY))
+                        except (discord.NotFound, discord.HTTPException):
+                            # 如果占位消息被删除或编辑失败，发送新消息
+                            reply_msg = await message.reply(embed=response_embed)
+                            if reply_msg:
+                                asyncio.create_task(EmbedFormatter.auto_delete_message(reply_msg, config.AUTO_DELETE_DELAY))
+                    elif message:
                         reply_msg = await message.reply(embed=response_embed)
                         if reply_msg:
                             asyncio.create_task(EmbedFormatter.auto_delete_message(reply_msg, config.AUTO_DELETE_DELAY))
-                elif message:
-                    reply_msg = await message.reply(embed=response_embed)
-                    if reply_msg:
-                        asyncio.create_task(EmbedFormatter.auto_delete_message(reply_msg, config.AUTO_DELETE_DELAY))
-                else:
-                    await EmbedFormatter.send_with_auto_delete(
-                        channel, 
-                        embed=response_embed, 
-                        delete_after=config.AUTO_DELETE_DELAY
-                    )
+                    else:
+                        await EmbedFormatter.send_with_auto_delete(
+                            channel, 
+                            embed=response_embed, 
+                            delete_after=config.AUTO_DELETE_DELAY
+                        )
             
             # 记录到数据库
             await database.record_qa(

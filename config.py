@@ -68,7 +68,7 @@ class Config:
         # AI请求限制
         self.MAX_TOKENS = 4000
         self.TEMPERATURE = 0.7
-        self.REQUEST_TIMEOUT = 30
+        self.REQUEST_TIMEOUT = 60
         
     def is_admin_user(self, user_id: int) -> bool:
         """检查用户是否为管理员"""
